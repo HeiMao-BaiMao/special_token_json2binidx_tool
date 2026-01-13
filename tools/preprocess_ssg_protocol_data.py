@@ -248,18 +248,27 @@ def main():
                             continue
 
                         data["data"] = data.pop(mapping["data"])
-                        for ele in data["data"]:
-                            old_key = list(ele.keys())[0]
-                            if match_vs(old_key, mapping):
-                                ele[find_key_by_value(mapping, old_key)] = ele.pop(old_key)
-                    
-                        flow = data["data"]
-                        tokens=[]
-                        for entity in flow:
-                            role=list(entity.keys())[0]
-                            token=sp_token_config[role]["prefix"]+encoder.tokenizer.tokenize(ftfy.fix_text(list(entity.values())[0]))+sp_token_config[role]["postfix"]
-                            tokens+=token
-                        encoded_docs.append(({"text":[tokens]},len(tokens)))
+
+                        # Check if it's SSG protocol format (array) or standard JSONL format (string/value)
+                        if isinstance(data["data"], list):
+                            # SSG protocol processing
+                            for ele in data["data"]:
+                                old_key = list(ele.keys())[0]
+                                if match_vs(old_key, mapping):
+                                    ele[find_key_by_value(mapping, old_key)] = ele.pop(old_key)
+
+                            flow = data["data"]
+                            tokens=[]
+                            for entity in flow:
+                                role=list(entity.keys())[0]
+                                token=sp_token_config[role]["prefix"]+encoder.tokenizer.tokenize(ftfy.fix_text(list(entity.values())[0]))+sp_token_config[role]["postfix"]
+                                tokens+=token
+                            encoded_docs.append(({"text":[tokens]},len(tokens)))
+                        else:
+                            # Standard JSONL processing (no special tokens)
+                            text_content = str(data["data"])
+                            doc_ids, bytes_len = encoder.encode(text_content)
+                            encoded_docs.append((doc_ids, bytes_len))
     
     # print(encoder.encode("asdasdasdasd"))
     # print(encoded_docs[-1])
