@@ -23,6 +23,12 @@ from abc import abstractmethod
 from tokenizers import Tokenizer
 from rwkv_tokenizer import RWKV_TOKENIZER, TRIE_TOKENIZER
 
+try:
+    import sentencepiece as spm
+    SENTENCEPIECE_AVAILABLE = True
+except ImportError:
+    SENTENCEPIECE_AVAILABLE = False
+
 from typing import List, Union
 
 
@@ -39,6 +45,9 @@ def build_tokenizer(args):
     elif args.tokenizer_type.lower() == "RWKVTokenizer".lower():
         assert args.vocab_file is not None
         tokenizer = RWKVTokenizer(args.vocab_file)
+    elif args.tokenizer_type.lower() == "SentencePieceTokenizer".lower():
+        assert args.vocab_file is not None
+        tokenizer = SentencePieceTokenizer(args.vocab_file)
     else:
         raise NotImplementedError(
             "{} tokenizer is not " "implemented.".format(args.tokenizer_type)
@@ -203,3 +212,48 @@ class RWKVTokenizer(AbstractTokenizer):
     @property
     def eod(self):
         return self.eod_id
+
+
+class SentencePieceTokenizer(AbstractTokenizer):
+    """SentencePiece Tokenizer for RWKV preprocessing."""
+
+    def __init__(self, model_file: str):
+        name = "SentencePieceTokenizer"
+        super().__init__(name)
+
+        if not SENTENCEPIECE_AVAILABLE:
+            raise ImportError(
+                "sentencepiece is not installed. "
+                "Please install it with: pip install sentencepiece>=0.1.99"
+            )
+
+        self.sp = spm.SentencePieceProcessor()
+        self.sp.load(model_file)
+        self._eod_id = self.sp.eos_id()
+
+    @property
+    def vocab_size(self) -> int:
+        return self.sp.get_piece_size()
+
+    @property
+    def vocab(self) -> dict:
+        return {self.sp.id_to_piece(i): i for i in range(self.vocab_size)}
+
+    @property
+    def inv_vocab(self):
+        return {i: self.sp.id_to_piece(i) for i in range(self.vocab_size)}
+
+    def tokenize(self, text: str) -> List[int]:
+        return self.sp.encode_as_ids(text)
+
+    def tokenize_batch(self, text_batch: Union[List[str], str]) -> List[List[int]]:
+        if isinstance(text_batch, str):
+            return [self.tokenize(text_batch)]
+        return [self.tokenize(text) for text in text_batch]
+
+    def detokenize(self, token_ids: List[int]) -> str:
+        return self.sp.decode_ids(token_ids)
+
+    @property
+    def eod(self) -> int:
+        return self._eod_id

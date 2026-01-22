@@ -14,7 +14,8 @@ RWKV モデルのデータセット準備のため、JSONL ファイルをバイ
 - 特殊トークンのサポート（conversation、system、search、think、env、common、text）
 - SSG プロトコル形式と標準 JSONL 形式を同一データセット内で混在可能
 - データフォルダごとのフィールドマッピング設定
-- 複数の語彙ファイル対応（RWKV、HuggingFace）
+- 複数のトークナイザー対応（RWKV、HuggingFace、SentencePiece）
+- **SentencePiece トークナイザー学習** - 独自コーパスからカスタムトークナイザーを学習可能
 
 ## インストール
 
@@ -30,6 +31,7 @@ pip install -r requirements.txt
 - tokenizers==0.13.*
 - torch==2.0.*
 - tqdm==4.65.*
+- sentencepiece>=0.1.99
 
 ## クイックスタート
 
@@ -145,7 +147,7 @@ your_folder/
 | `--datafolder` | カンマ区切りのデータフォルダパス | 必須 |
 | `--output-prefix` | 出力ファイルのプレフィックス（.bin/.idx なし） | 必須 |
 | `--vocab` | 語彙ファイルのパス | 必須 |
-| `--tokenizer-type` | トークナイザータイプ（RWKVTokenizer、HFTokenizer） | 必須 |
+| `--tokenizer-type` | トークナイザータイプ（RWKVTokenizer、HFTokenizer、SentencePieceTokenizer） | 必須 |
 | `--sp_token_config` | 特殊トークン設定 JSON | `./tools/sp_token_config.json` |
 | `--dataset-impl` | データセット形式（mmap、lazy、cached） | `mmap` |
 | `--append-eod` | 文書終了トークンを追加 | False |
@@ -224,6 +226,132 @@ python tools/preprocess_ssg_protocol_data.py \
 ```
 
 すべての行が正しく処理され、1つのデータセットに統合されます。
+
+## SentencePiece トークナイザーサポート
+
+このツールは SentencePiece トークナイザーの学習と使用をサポートしており、独自のコーパスに最適化されたカスタム語彙を作成できます。
+
+### SentencePiece を使う理由
+
+- **カスタム語彙**: ドメイン固有のトークナイザーを学習可能（コード、医療、法律など）
+- **多言語サポート**: 文字カバレッジ設定による多言語テキストの適切な処理
+- **バイトフォールバック**: バイトレベルフォールバックであらゆる Unicode 文字に対応
+- **柔軟なサイズ**: 小規模（1K）から大規模（65K+）まで語彙サイズを選択可能
+
+### SentencePiece モデルの学習
+
+```bash
+python tools/train_sentencepiece.py \
+  --input ./training_data \
+  --model-prefix ./models/my_tokenizer \
+  --vocab-size 32000 \
+  --model-type bpe \
+  --character-coverage 0.9995 \
+  --byte-fallback
+```
+
+#### 学習用引数
+
+| 引数 | 説明 | デフォルト |
+|------|------|----------|
+| `--input` | 入力ファイル/ディレクトリ（txt、jsonl 対応） | 必須 |
+| `--model-prefix` | 出力モデルのプレフィックス（.model と .vocab を作成） | 必須 |
+| `--vocab-size` | 語彙サイズ（最大: 65529） | 32000 |
+| `--model-type` | モデルタイプ: unigram、bpe、char、word | bpe |
+| `--character-coverage` | 学習時の文字カバレッジ | 0.9995 |
+| `--byte-fallback` | 未知文字のバイトフォールバックを有効化 | 有効 |
+| `--user-special-tokens` | カスタム特殊トークンの JSON ファイル | None |
+| `--input-format` | 入力形式: auto、txt、jsonl | auto |
+| `--jsonl-key` | JSONL からテキストを抽出するキー | text |
+| `--num-threads` | 学習スレッド数 | 16 |
+
+#### 語彙サイズの制限
+
+SentencePiece の最大語彙サイズは **65529** です。これはリポジトリ特殊トークン（ID 65529-65535）用の領域を確保するためです。ユーザー定義の特殊トークンを使用する場合、制限はさらに減少します。
+
+```
+ID 0-65528: SentencePiece 語彙
+ID 65529-65535: リポジトリ特殊トークン（sp_token_config.json で定義）
+```
+
+#### カスタム特殊トークン
+
+カスタム特殊トークンを定義する JSON ファイルを作成できます：
+
+```json
+{
+  "user_defined_symbols": ["<custom1>", "<custom2>"],
+  "control_symbols": ["<ctrl1>"]
+}
+```
+
+学習時に使用：
+
+```bash
+python tools/train_sentencepiece.py \
+  --input ./data \
+  --model-prefix ./models/custom \
+  --vocab-size 30000 \
+  --user-special-tokens ./my_special_tokens.json
+```
+
+### 前処理での SentencePiece の使用
+
+学習後、SentencePiece モデルを前処理に使用できます：
+
+```bash
+# 標準前処理
+python tools/preprocess_data.py \
+  --input ./your_data.jsonl \
+  --output-prefix ./output/data \
+  --vocab ./models/my_tokenizer.model \
+  --tokenizer-type SentencePieceTokenizer \
+  --dataset-impl mmap \
+  --append-eod
+
+# SSG プロトコル前処理
+python tools/preprocess_ssg_protocol_data.py \
+  --datafolder ./your_folder \
+  --sp_token_config ./tools/sp_token_config.json \
+  --output-prefix ./output/data \
+  --vocab ./models/my_tokenizer.model \
+  --tokenizer-type SentencePieceTokenizer \
+  --dataset-impl mmap \
+  --append-eod
+```
+
+### 例: エンドツーエンドのワークフロー
+
+1. **学習コーパスの準備**（テキストファイルまたは JSONL）：
+```bash
+# 複数ディレクトリから
+ls ./corpus/
+  wiki/
+  books/
+  conversations/
+```
+
+2. **SentencePiece モデルの学習**：
+```bash
+python tools/train_sentencepiece.py \
+  --input ./corpus \
+  --model-prefix ./models/my_rwkv_tokenizer \
+  --vocab-size 50000 \
+  --model-type bpe \
+  --character-coverage 0.9995
+```
+
+3. **RWKV 学習用データの前処理**：
+```bash
+python tools/preprocess_ssg_protocol_data.py \
+  --datafolder ./training_data \
+  --output-prefix ./output/dataset \
+  --vocab ./models/my_rwkv_tokenizer.model \
+  --tokenizer-type SentencePieceTokenizer \
+  --append-eod
+```
+
+4. **RWKV-LM** で事前学習を実行。
 
 ## トラブルシューティング
 

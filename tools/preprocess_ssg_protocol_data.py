@@ -100,6 +100,7 @@ def get_args():
             "CharLevelTokenizer",
             "TiktokenTokenizer",
             "RWKVTokenizer",
+            "SentencePieceTokenizer",
         ],
         help="What type of tokenizer to use.",
     )

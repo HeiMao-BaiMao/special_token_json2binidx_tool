@@ -14,7 +14,8 @@ This repository is greatly simplified from [gpt-neox](https://github.com/Eleuthe
 - Support for special tokens (conversation, system, search, think, env, common, text)
 - Mix SSG protocol format and standard JSONL format in the same dataset
 - Configurable field mapping per data folder
-- Multiple vocabulary support (RWKV, HuggingFace)
+- Multiple tokenizer support (RWKV, HuggingFace, SentencePiece)
+- **SentencePiece tokenizer training** - Train custom tokenizers from your own corpus
 
 ## Installation
 
@@ -30,6 +31,7 @@ pip install -r requirements.txt
 - tokenizers==0.13.*
 - torch==2.0.*
 - tqdm==4.65.*
+- sentencepiece>=0.1.99
 
 ## Quick Start
 
@@ -145,7 +147,7 @@ Create a `{folder_name}.json` in your data folder to customize field mappings:
 | `--datafolder` | Comma-separated data folders | Required |
 | `--output-prefix` | Output file prefix (without .bin/.idx) | Required |
 | `--vocab` | Path to vocabulary file | Required |
-| `--tokenizer-type` | Tokenizer type (RWKVTokenizer, HFTokenizer) | Required |
+| `--tokenizer-type` | Tokenizer type (RWKVTokenizer, HFTokenizer, SentencePieceTokenizer) | Required |
 | `--sp_token_config` | Special token config JSON | `./tools/sp_token_config.json` |
 | `--dataset-impl` | Dataset format (mmap, lazy, cached) | `mmap` |
 | `--append-eod` | Append end-of-document token | False |
@@ -224,6 +226,132 @@ python tools/preprocess_ssg_protocol_data.py \
 ```
 
 All lines will be processed correctly and merged into one dataset.
+
+## SentencePiece Tokenizer Support
+
+This tool supports training and using SentencePiece tokenizers, allowing you to create custom vocabularies optimized for your specific corpus.
+
+### Why Use SentencePiece?
+
+- **Custom Vocabulary**: Train a tokenizer optimized for your domain (e.g., code, medical, legal)
+- **Language Support**: Better handling of multilingual text with character coverage settings
+- **Byte Fallback**: Handle any Unicode character with byte-level fallback
+- **Flexible Size**: Choose vocabulary size from small (1K) to large (65K+)
+
+### Training a SentencePiece Model
+
+```bash
+python tools/train_sentencepiece.py \
+  --input ./training_data \
+  --model-prefix ./models/my_tokenizer \
+  --vocab-size 32000 \
+  --model-type bpe \
+  --character-coverage 0.9995 \
+  --byte-fallback
+```
+
+#### Training Arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--input` | Input file(s) or directory (txt, jsonl supported) | Required |
+| `--model-prefix` | Output model prefix (creates .model and .vocab) | Required |
+| `--vocab-size` | Vocabulary size (max: 65529) | 32000 |
+| `--model-type` | Model type: unigram, bpe, char, word | bpe |
+| `--character-coverage` | Character coverage for training | 0.9995 |
+| `--byte-fallback` | Enable byte fallback for unknown chars | Enabled |
+| `--user-special-tokens` | JSON file with custom special tokens | None |
+| `--input-format` | Input format: auto, txt, jsonl | auto |
+| `--jsonl-key` | Key to extract text from JSONL | text |
+| `--num-threads` | Number of training threads | 16 |
+
+#### Vocabulary Size Limit
+
+The maximum SentencePiece vocabulary size is **65529** to reserve space for repository special tokens (ID 65529-65535). If using user-defined special tokens, the limit is further reduced.
+
+```
+ID 0-65528: SentencePiece vocabulary
+ID 65529-65535: Repository special tokens (defined in sp_token_config.json)
+```
+
+#### Custom Special Tokens
+
+Create a JSON file to define custom special tokens:
+
+```json
+{
+  "user_defined_symbols": ["<custom1>", "<custom2>"],
+  "control_symbols": ["<ctrl1>"]
+}
+```
+
+Then use it during training:
+
+```bash
+python tools/train_sentencepiece.py \
+  --input ./data \
+  --model-prefix ./models/custom \
+  --vocab-size 30000 \
+  --user-special-tokens ./my_special_tokens.json
+```
+
+### Using SentencePiece with Preprocessing
+
+After training, use your SentencePiece model for preprocessing:
+
+```bash
+# Standard preprocessing
+python tools/preprocess_data.py \
+  --input ./your_data.jsonl \
+  --output-prefix ./output/data \
+  --vocab ./models/my_tokenizer.model \
+  --tokenizer-type SentencePieceTokenizer \
+  --dataset-impl mmap \
+  --append-eod
+
+# SSG protocol preprocessing
+python tools/preprocess_ssg_protocol_data.py \
+  --datafolder ./your_folder \
+  --sp_token_config ./tools/sp_token_config.json \
+  --output-prefix ./output/data \
+  --vocab ./models/my_tokenizer.model \
+  --tokenizer-type SentencePieceTokenizer \
+  --dataset-impl mmap \
+  --append-eod
+```
+
+### Example: End-to-End Workflow
+
+1. **Prepare training corpus** (text files or JSONL):
+```bash
+# From multiple directories
+ls ./corpus/
+  wiki/
+  books/
+  conversations/
+```
+
+2. **Train SentencePiece model**:
+```bash
+python tools/train_sentencepiece.py \
+  --input ./corpus \
+  --model-prefix ./models/my_rwkv_tokenizer \
+  --vocab-size 50000 \
+  --model-type bpe \
+  --character-coverage 0.9995
+```
+
+3. **Preprocess data for RWKV training**:
+```bash
+python tools/preprocess_ssg_protocol_data.py \
+  --datafolder ./training_data \
+  --output-prefix ./output/dataset \
+  --vocab ./models/my_rwkv_tokenizer.model \
+  --tokenizer-type SentencePieceTokenizer \
+  --append-eod
+```
+
+4. **Use with RWKV-LM** for pretraining.
 
 ## Troubleshooting
 
