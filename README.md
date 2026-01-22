@@ -236,7 +236,7 @@ This tool supports training and using SentencePiece tokenizers, allowing you to 
 - **Custom Vocabulary**: Train a tokenizer optimized for your domain (e.g., code, medical, legal)
 - **Language Support**: Better handling of multilingual text with character coverage settings
 - **Byte Fallback**: Handle any Unicode character with byte-level fallback
-- **Flexible Size**: Choose vocabulary size from small (1K) to large (65K+)
+- **65536 Total by Default**: Default vocab size (65529) + repo special tokens (7) = 65536 total
 
 ### Training a SentencePiece Model
 
@@ -244,11 +244,12 @@ This tool supports training and using SentencePiece tokenizers, allowing you to 
 python tools/train_sentencepiece.py \
   --input ./training_data \
   --model-prefix ./models/my_tokenizer \
-  --vocab-size 32000 \
   --model-type bpe \
   --character-coverage 0.9995 \
   --byte-fallback
 ```
+
+By default, `--vocab-size` is 65529, which combined with 7 repo special tokens gives 65536 total.
 
 #### Training Arguments
 
@@ -256,7 +257,7 @@ python tools/train_sentencepiece.py \
 |----------|-------------|---------|
 | `--input` | Input file(s) or directory (txt, jsonl supported) | Required |
 | `--model-prefix` | Output model prefix (creates .model and .vocab) | Required |
-| `--vocab-size` | Vocabulary size (max: 65529) | 32000 |
+| `--vocab-size` | Vocabulary size | 65529 |
 | `--model-type` | Model type: unigram, bpe, char, word | bpe |
 | `--character-coverage` | Character coverage for training | 0.9995 |
 | `--byte-fallback` | Enable byte fallback for unknown chars | Enabled |
@@ -285,15 +286,17 @@ Create a JSON file to define custom special tokens:
 }
 ```
 
-Then use it during training:
+Then use it during training (reduce vocab-size to make room for custom tokens):
 
 ```bash
 python tools/train_sentencepiece.py \
   --input ./data \
   --model-prefix ./models/custom \
-  --vocab-size 30000 \
+  --vocab-size 65526 \
   --user-special-tokens ./my_special_tokens.json
 ```
+
+In this example: 65526 + 3 user tokens + 7 repo tokens = 65536 total.
 
 ### Using SentencePiece with Preprocessing
 
@@ -336,10 +339,11 @@ ls ./corpus/
 python tools/train_sentencepiece.py \
   --input ./corpus \
   --model-prefix ./models/my_rwkv_tokenizer \
-  --vocab-size 50000 \
   --model-type bpe \
   --character-coverage 0.9995
 ```
+
+This creates a tokenizer with 65529 tokens (default), totaling 65536 with repo special tokens.
 
 3. **Preprocess data for RWKV training**:
 ```bash

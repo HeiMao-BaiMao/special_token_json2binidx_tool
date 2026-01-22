@@ -74,9 +74,9 @@ def get_args():
     group.add_argument(
         "--vocab-size",
         type=int,
-        default=32000,
-        help=f"Vocabulary size. Default: 32000. Maximum: {MAX_SP_VOCAB_SIZE} "
-        f"(to reserve space for {REPO_SPECIAL_TOKEN_COUNT} repo special tokens).",
+        default=MAX_SP_VOCAB_SIZE,
+        help=f"Vocabulary size. Default: {MAX_SP_VOCAB_SIZE} "
+        f"(fills to 65536 total with {REPO_SPECIAL_TOKEN_COUNT} repo special tokens).",
     )
     group.add_argument(
         "--model-type",

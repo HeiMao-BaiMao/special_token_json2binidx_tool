@@ -236,7 +236,7 @@ python tools/preprocess_ssg_protocol_data.py \
 - **カスタム語彙**: ドメイン固有のトークナイザーを学習可能（コード、医療、法律など）
 - **多言語サポート**: 文字カバレッジ設定による多言語テキストの適切な処理
 - **バイトフォールバック**: バイトレベルフォールバックであらゆる Unicode 文字に対応
-- **柔軟なサイズ**: 小規模（1K）から大規模（65K+）まで語彙サイズを選択可能
+- **デフォルトで65536**: デフォルト語彙サイズ（65529）+ リポジトリ特殊トークン（7）= 合計65536
 
 ### SentencePiece モデルの学習
 
@@ -244,11 +244,12 @@ python tools/preprocess_ssg_protocol_data.py \
 python tools/train_sentencepiece.py \
   --input ./training_data \
   --model-prefix ./models/my_tokenizer \
-  --vocab-size 32000 \
   --model-type bpe \
   --character-coverage 0.9995 \
   --byte-fallback
 ```
+
+デフォルトでは `--vocab-size` は 65529 で、7つのリポジトリ特殊トークンと合わせて合計 65536 になります。
 
 #### 学習用引数
 
@@ -256,7 +257,7 @@ python tools/train_sentencepiece.py \
 |------|------|----------|
 | `--input` | 入力ファイル/ディレクトリ（txt、jsonl 対応） | 必須 |
 | `--model-prefix` | 出力モデルのプレフィックス（.model と .vocab を作成） | 必須 |
-| `--vocab-size` | 語彙サイズ（最大: 65529） | 32000 |
+| `--vocab-size` | 語彙サイズ | 65529 |
 | `--model-type` | モデルタイプ: unigram、bpe、char、word | bpe |
 | `--character-coverage` | 学習時の文字カバレッジ | 0.9995 |
 | `--byte-fallback` | 未知文字のバイトフォールバックを有効化 | 有効 |
@@ -285,15 +286,17 @@ ID 65529-65535: リポジトリ特殊トークン（sp_token_config.json で定�
 }
 ```
 
-学習時に使用：
+学習時に使用（カスタムトークン分の容量を確保するため vocab-size を減らす）：
 
 ```bash
 python tools/train_sentencepiece.py \
   --input ./data \
   --model-prefix ./models/custom \
-  --vocab-size 30000 \
+  --vocab-size 65526 \
   --user-special-tokens ./my_special_tokens.json
 ```
+
+この例: 65526 + ユーザートークン3個 + リポジトリトークン7個 = 合計65536
 
 ### 前処理での SentencePiece の使用
 
@@ -336,10 +339,11 @@ ls ./corpus/
 python tools/train_sentencepiece.py \
   --input ./corpus \
   --model-prefix ./models/my_rwkv_tokenizer \
-  --vocab-size 50000 \
   --model-type bpe \
   --character-coverage 0.9995
 ```
+
+これにより 65529 トークン（デフォルト）のトークナイザーが作成され、リポジトリ特殊トークンと合わせて合計 65536 になります。
 
 3. **RWKV 学習用データの前処理**：
 ```bash
