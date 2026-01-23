@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Train a SentencePiece tokenizer for RWKV preprocessing."""
+"""Build a SentencePiece vocabulary for RWKV preprocessing."""
 
 import argparse
 import json
@@ -26,16 +26,13 @@ from typing import Iterator, List, Optional
 import sentencepiece as spm
 
 
-# Reserved token IDs for repository special tokens (defined in sp_token_config.json)
-# ID 65529-65535: 7 repository special tokens
-REPO_SPECIAL_TOKEN_COUNT = 7
-MAX_VOCAB_SIZE = 65536
-MAX_SP_VOCAB_SIZE = MAX_VOCAB_SIZE - REPO_SPECIAL_TOKEN_COUNT  # 65529
+# Default total vocabulary size
+DEFAULT_VOCAB_SIZE = 65536
 
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description="Train a SentencePiece tokenizer for RWKV preprocessing"
+        description="Build a SentencePiece vocabulary for RWKV preprocessing"
     )
 
     group = parser.add_argument_group(title="input data")
@@ -74,9 +71,9 @@ def get_args():
     group.add_argument(
         "--vocab-size",
         type=int,
-        default=MAX_SP_VOCAB_SIZE,
-        help=f"Vocabulary size. Default: {MAX_SP_VOCAB_SIZE} "
-        f"(fills to 65536 total with {REPO_SPECIAL_TOKEN_COUNT} repo special tokens).",
+        default=DEFAULT_VOCAB_SIZE,
+        help=f"Total vocabulary size target. Default: {DEFAULT_VOCAB_SIZE}. "
+        f"SentencePiece vocab = vocab-size - special tokens count.",
     )
     group.add_argument(
         "--model-type",
@@ -88,8 +85,8 @@ def get_args():
     group.add_argument(
         "--character-coverage",
         type=float,
-        default=0.9995,
-        help="Character coverage for training. Default: 0.9995",
+        default=1.0,
+        help="Character coverage for vocabulary building. Default: 1.0",
     )
     group.add_argument(
         "--byte-fallback",
@@ -105,19 +102,19 @@ def get_args():
 
     group = parser.add_argument_group(title="special tokens")
     group.add_argument(
-        "--user-special-tokens",
+        "--special-tokens",
         type=str,
         default=None,
-        help="Path to JSON file defining user special tokens. "
-        "Format: {'user_defined_symbols': [...], 'control_symbols': [...]}",
+        help="Path to text file defining special tokens (one token per line). "
+        "These are added as SentencePiece user_defined_symbols.",
     )
 
-    group = parser.add_argument_group(title="training options")
+    group = parser.add_argument_group(title="build options")
     group.add_argument(
         "--input-sentence-size",
         type=int,
         default=0,
-        help="Maximum number of sentences to use for training. "
+        help="Maximum number of sentences to use. "
         "0 means use all sentences. Default: 0",
     )
     group.add_argument(
@@ -129,18 +126,18 @@ def get_args():
         "--seed-sentencepiece-size",
         type=int,
         default=1000000,
-        help="Seed sentencepiece size for training. Default: 1000000",
+        help="Seed sentencepiece size. Default: 1000000",
     )
     group.add_argument(
         "--num-threads",
         type=int,
         default=16,
-        help="Number of threads for training. Default: 16",
+        help="Number of threads. Default: 16",
     )
     group.add_argument(
         "--train-extremely-large-corpus",
         action="store_true",
-        help="Enable training on extremely large corpus (may use more memory).",
+        help="Enable for extremely large corpus (may use more memory).",
     )
 
     args = parser.parse_args()
@@ -243,39 +240,46 @@ def collect_text_to_file(
     return total_lines
 
 
-def load_user_special_tokens(filepath: Optional[str]) -> dict:
-    """Load user-defined special tokens from JSON file."""
+def load_special_tokens(filepath: Optional[str]) -> List[str]:
+    """Load special tokens from text file (one token per line)."""
     if filepath is None:
-        return {"user_defined_symbols": [], "control_symbols": []}
+        return []
 
+    tokens = []
     with open(filepath, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    return {
-        "user_defined_symbols": data.get("user_defined_symbols", []),
-        "control_symbols": data.get("control_symbols", []),
-    }
+        for line in f:
+            token = line.strip()
+            if token:
+                tokens.append(token)
+    return tokens
 
 
 def main():
     args = get_args()
 
-    # Validate vocab size
-    user_tokens = load_user_special_tokens(args.user_special_tokens)
-    user_token_count = len(user_tokens["user_defined_symbols"]) + len(
-        user_tokens["control_symbols"]
-    )
+    # Load special tokens
+    special_tokens = load_special_tokens(args.special_tokens)
+    special_token_count = len(special_tokens)
 
-    effective_max_vocab = MAX_SP_VOCAB_SIZE - user_token_count
-    if args.vocab_size > effective_max_vocab:
+    # Calculate actual SentencePiece vocab size from total target
+    # total = sp_vocab + special_tokens
+    # sp_vocab = total - special_tokens
+    sp_vocab_size = args.vocab_size - special_token_count
+
+    if sp_vocab_size <= 0:
         print(
-            f"Error: vocab_size ({args.vocab_size}) exceeds maximum allowed "
-            f"({effective_max_vocab}) after accounting for:\n"
-            f"  - {REPO_SPECIAL_TOKEN_COUNT} repo special tokens (ID 65529-65535)\n"
-            f"  - {user_token_count} user special tokens",
+            f"Error: vocab_size ({args.vocab_size}) is too small.\n"
+            f"  - Special tokens: {special_token_count}\n"
+            f"  Resulting SentencePiece vocab would be: {sp_vocab_size}",
             file=sys.stderr,
         )
         sys.exit(1)
+
+    print(f"Target total vocab size: {args.vocab_size}")
+    print(f"  - Special tokens: {special_token_count}")
+    print(f"  = SentencePiece vocab size: {sp_vocab_size}")
+    if special_tokens:
+        print(f"  Special tokens: {special_tokens}")
 
     # Get input files
     input_files = get_input_files(args.input)
@@ -300,7 +304,7 @@ def main():
         total_lines = collect_text_to_file(
             input_files, args.input_format, args.jsonl_key, tmp_path
         )
-        print(f"Collected {total_lines} lines of text for training")
+        print(f"Collected {total_lines} lines of text")
 
         if total_lines == 0:
             print("Error: No text found in input files.", file=sys.stderr)
@@ -310,7 +314,7 @@ def main():
         train_args = {
             "input": tmp_path,
             "model_prefix": args.model_prefix,
-            "vocab_size": args.vocab_size,
+            "vocab_size": sp_vocab_size,
             "model_type": args.model_type,
             "character_coverage": args.character_coverage,
             "byte_fallback": args.byte_fallback,
@@ -328,19 +332,14 @@ def main():
         if args.train_extremely_large_corpus:
             train_args["train_extremely_large_corpus"] = True
 
-        # Add user special tokens
-        if user_tokens["user_defined_symbols"]:
-            train_args["user_defined_symbols"] = ",".join(
-                user_tokens["user_defined_symbols"]
-            )
+        # Add special tokens
+        if special_tokens:
+            train_args["user_defined_symbols"] = ",".join(special_tokens)
 
-        if user_tokens["control_symbols"]:
-            train_args["control_symbols"] = ",".join(user_tokens["control_symbols"])
-
-        # Train the model
-        print("\nTraining SentencePiece model...")
+        # Build the vocabulary
+        print("\nBuilding SentencePiece vocabulary...")
         print(f"  Model type: {args.model_type}")
-        print(f"  Vocab size: {args.vocab_size}")
+        print(f"  SentencePiece vocab size: {sp_vocab_size}")
         print(f"  Character coverage: {args.character_coverage}")
         print(f"  Byte fallback: {args.byte_fallback}")
 
@@ -353,12 +352,23 @@ def main():
         # Verify the model
         sp = spm.SentencePieceProcessor()
         sp.load(f"{args.model_prefix}.model")
+        actual_vocab_size = sp.get_piece_size()
+
         print(f"\nModel verification:")
-        print(f"  Actual vocab size: {sp.get_piece_size()}")
-        print(f"  EOS ID: {sp.eos_id()}")
-        print(f"  BOS ID: {sp.bos_id()}")
+        print(f"  Total vocab size: {actual_vocab_size}")
+        print(f"  (includes {special_token_count} special tokens)")
+        print(f"\nBuilt-in special token IDs:")
         print(f"  UNK ID: {sp.unk_id()}")
+        print(f"  BOS ID: {sp.bos_id()}")
+        print(f"  EOS ID: {sp.eos_id()}")
         print(f"  PAD ID: {sp.pad_id()}")
+
+        # Show user-defined special token IDs
+        if special_tokens:
+            print(f"\nUser-defined special token IDs:")
+            for token in special_tokens:
+                token_id = sp.piece_to_id(token)
+                print(f"  {token}: {token_id}")
 
     finally:
         # Clean up temporary file

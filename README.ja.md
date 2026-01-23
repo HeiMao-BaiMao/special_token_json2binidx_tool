@@ -15,7 +15,7 @@ RWKV モデルのデータセット準備のため、JSONL ファイルをバイ
 - SSG プロトコル形式と標準 JSONL 形式を同一データセット内で混在可能
 - データフォルダごとのフィールドマッピング設定
 - 複数のトークナイザー対応（RWKV、HuggingFace、SentencePiece）
-- **SentencePiece トークナイザー学習** - 独自コーパスからカスタムトークナイザーを学習可能
+- **SentencePiece 語彙構築** - 独自コーパスからカスタム語彙を構築可能
 
 ## インストール
 
@@ -229,74 +229,65 @@ python tools/preprocess_ssg_protocol_data.py \
 
 ## SentencePiece トークナイザーサポート
 
-このツールは SentencePiece トークナイザーの学習と使用をサポートしており、独自のコーパスに最適化されたカスタム語彙を作成できます。
+このツールは SentencePiece 語彙の構築と使用をサポートしており、独自のコーパスに最適化されたカスタムトークナイザーを作成できます。
 
 ### SentencePiece を使う理由
 
 - **カスタム語彙**: ドメイン固有のトークナイザーを学習可能（コード、医療、法律など）
 - **多言語サポート**: 文字カバレッジ設定による多言語テキストの適切な処理
 - **バイトフォールバック**: バイトレベルフォールバックであらゆる Unicode 文字に対応
-- **デフォルトで65536**: デフォルト語彙サイズ（65529）+ リポジトリ特殊トークン（7）= 合計65536
+- **デフォルトで65536**: デフォルト目標語彙サイズは65536、特殊トークン分は自動調整
 
-### SentencePiece モデルの学習
+### SentencePiece 語彙の構築
 
 ```bash
 python tools/train_sentencepiece.py \
   --input ./training_data \
   --model-prefix ./models/my_tokenizer \
-  --model-type bpe \
-  --character-coverage 0.9995 \
-  --byte-fallback
+  --model-type bpe
 ```
 
-デフォルトでは `--vocab-size` は 65529 で、7つのリポジトリ特殊トークンと合わせて合計 65536 になります。
+`--vocab-size` は合計目標サイズを指定します（デフォルト: 65536）。SentencePiece語彙は自動調整されます: `vocab-size - 特殊トークン数`。
 
-#### 学習用引数
+#### 構築オプション
 
 | 引数 | 説明 | デフォルト |
 |------|------|----------|
 | `--input` | 入力ファイル/ディレクトリ（txt、jsonl 対応） | 必須 |
 | `--model-prefix` | 出力モデルのプレフィックス（.model と .vocab を作成） | 必須 |
-| `--vocab-size` | 語彙サイズ | 65529 |
+| `--vocab-size` | 合計語彙サイズ（SP語彙は自動調整） | 65536 |
 | `--model-type` | モデルタイプ: unigram、bpe、char、word | bpe |
-| `--character-coverage` | 学習時の文字カバレッジ | 0.9995 |
+| `--character-coverage` | 文字カバレッジ | 1.0 |
 | `--byte-fallback` | 未知文字のバイトフォールバックを有効化 | 有効 |
-| `--user-special-tokens` | カスタム特殊トークンの JSON ファイル | None |
+| `--special-tokens` | 特殊トークンのテキストファイル（1行1トークン） | None |
 | `--input-format` | 入力形式: auto、txt、jsonl | auto |
 | `--jsonl-key` | JSONL からテキストを抽出するキー | text |
-| `--num-threads` | 学習スレッド数 | 16 |
+| `--num-threads` | スレッド数 | 16 |
 
-#### 語彙サイズの制限
+#### 特殊トークン
 
-SentencePiece の最大語彙サイズは **65529** です。これはリポジトリ特殊トークン（ID 65529-65535）用の領域を確保するためです。ユーザー定義の特殊トークンを使用する場合、制限はさらに減少します。
+すべての特殊トークン（リポジトリ特殊トークンを含む）は SentencePiece の user_defined_symbols として追加されます。1行1トークンのテキストファイルを作成します：
 
 ```
-ID 0-65528: SentencePiece 語彙
-ID 65529-65535: リポジトリ特殊トークン（sp_token_config.json で定義）
+<|search|>
+<|system|>
+<|conversation|>
+<|think|>
+<|env|>
+<|common|>
+<|end|>
 ```
 
-#### カスタム特殊トークン
-
-カスタム特殊トークンを定義する JSON ファイルを作成できます：
-
-```json
-{
-  "user_defined_symbols": ["<custom1>", "<custom2>"],
-  "control_symbols": ["<ctrl1>"]
-}
-```
-
-学習時に使用（カスタムトークン分の容量を確保するため vocab-size を減らす）：
+構築時に使用：
 
 ```bash
 python tools/train_sentencepiece.py \
   --input ./data \
   --model-prefix ./models/custom \
-  --vocab-size 65526 \
-  --user-special-tokens ./my_special_tokens.json
+  --special-tokens ./my_special_tokens.txt
 ```
 
-この例: 65526 + ユーザートークン3個 + リポジトリトークン7個 = 合計65536
+SentencePiece語彙は自動調整されます: `vocab-size - 特殊トークン数`。例えば、7個の特殊トークンがある場合: 65536 - 7 = 65529
 
 ### 前処理での SentencePiece の使用
 
@@ -325,7 +316,7 @@ python tools/preprocess_ssg_protocol_data.py \
 
 ### 例: エンドツーエンドのワークフロー
 
-1. **学習コーパスの準備**（テキストファイルまたは JSONL）：
+1. **コーパスの準備**（テキストファイルまたは JSONL）：
 ```bash
 # 複数ディレクトリから
 ls ./corpus/
@@ -334,16 +325,15 @@ ls ./corpus/
   conversations/
 ```
 
-2. **SentencePiece モデルの学習**：
+2. **SentencePiece 語彙の構築**：
 ```bash
 python tools/train_sentencepiece.py \
   --input ./corpus \
   --model-prefix ./models/my_rwkv_tokenizer \
-  --model-type bpe \
-  --character-coverage 0.9995
+  --model-type bpe
 ```
 
-これにより 65529 トークン（デフォルト）のトークナイザーが作成され、リポジトリ特殊トークンと合わせて合計 65536 になります。
+デフォルトの `--vocab-size 65536` で特殊トークンなしの場合、65536トークンの SentencePiece モデルが作成されます。`--special-tokens` で特殊トークンを追加できます。
 
 3. **RWKV 学習用データの前処理**：
 ```bash

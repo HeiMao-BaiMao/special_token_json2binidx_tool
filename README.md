@@ -15,7 +15,7 @@ This repository is greatly simplified from [gpt-neox](https://github.com/Eleuthe
 - Mix SSG protocol format and standard JSONL format in the same dataset
 - Configurable field mapping per data folder
 - Multiple tokenizer support (RWKV, HuggingFace, SentencePiece)
-- **SentencePiece tokenizer training** - Train custom tokenizers from your own corpus
+- **SentencePiece vocabulary building** - Build custom vocabularies from your own corpus
 
 ## Installation
 
@@ -229,74 +229,65 @@ All lines will be processed correctly and merged into one dataset.
 
 ## SentencePiece Tokenizer Support
 
-This tool supports training and using SentencePiece tokenizers, allowing you to create custom vocabularies optimized for your specific corpus.
+This tool supports building and using SentencePiece vocabularies, allowing you to create custom tokenizers optimized for your specific corpus.
 
 ### Why Use SentencePiece?
 
 - **Custom Vocabulary**: Train a tokenizer optimized for your domain (e.g., code, medical, legal)
 - **Language Support**: Better handling of multilingual text with character coverage settings
 - **Byte Fallback**: Handle any Unicode character with byte-level fallback
-- **65536 Total by Default**: Default vocab size (65529) + repo special tokens (7) = 65536 total
+- **65536 Total by Default**: Default target vocab size is 65536, auto-adjusted for special tokens
 
-### Training a SentencePiece Model
+### Building a SentencePiece Vocabulary
 
 ```bash
 python tools/train_sentencepiece.py \
   --input ./training_data \
   --model-prefix ./models/my_tokenizer \
-  --model-type bpe \
-  --character-coverage 0.9995 \
-  --byte-fallback
+  --model-type bpe
 ```
 
-By default, `--vocab-size` is 65529, which combined with 7 repo special tokens gives 65536 total.
+The `--vocab-size` specifies the total target (default: 65536). SentencePiece vocab is automatically adjusted: `vocab-size - special_tokens_count`.
 
-#### Training Arguments
+#### Build Arguments
 
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `--input` | Input file(s) or directory (txt, jsonl supported) | Required |
 | `--model-prefix` | Output model prefix (creates .model and .vocab) | Required |
-| `--vocab-size` | Vocabulary size | 65529 |
+| `--vocab-size` | Total vocab size target (SP vocab auto-adjusted) | 65536 |
 | `--model-type` | Model type: unigram, bpe, char, word | bpe |
-| `--character-coverage` | Character coverage for training | 0.9995 |
+| `--character-coverage` | Character coverage | 1.0 |
 | `--byte-fallback` | Enable byte fallback for unknown chars | Enabled |
-| `--user-special-tokens` | JSON file with custom special tokens | None |
+| `--special-tokens` | Text file with special tokens (one per line) | None |
 | `--input-format` | Input format: auto, txt, jsonl | auto |
 | `--jsonl-key` | Key to extract text from JSONL | text |
-| `--num-threads` | Number of training threads | 16 |
+| `--num-threads` | Number of threads | 16 |
 
-#### Vocabulary Size Limit
+#### Special Tokens
 
-The maximum SentencePiece vocabulary size is **65529** to reserve space for repository special tokens (ID 65529-65535). If using user-defined special tokens, the limit is further reduced.
+All special tokens (including repository special tokens) are added as SentencePiece user_defined_symbols. Create a text file with one token per line:
 
 ```
-ID 0-65528: SentencePiece vocabulary
-ID 65529-65535: Repository special tokens (defined in sp_token_config.json)
+<|search|>
+<|system|>
+<|conversation|>
+<|think|>
+<|env|>
+<|common|>
+<|end|>
 ```
 
-#### Custom Special Tokens
-
-Create a JSON file to define custom special tokens:
-
-```json
-{
-  "user_defined_symbols": ["<custom1>", "<custom2>"],
-  "control_symbols": ["<ctrl1>"]
-}
-```
-
-Then use it during training (reduce vocab-size to make room for custom tokens):
+Then use it when building:
 
 ```bash
 python tools/train_sentencepiece.py \
   --input ./data \
   --model-prefix ./models/custom \
-  --vocab-size 65526 \
-  --user-special-tokens ./my_special_tokens.json
+  --special-tokens ./my_special_tokens.txt
 ```
 
-In this example: 65526 + 3 user tokens + 7 repo tokens = 65536 total.
+SentencePiece vocab is automatically adjusted: `vocab-size - special_tokens_count`. For example, with 7 special tokens: 65536 - 7 = 65529.
 
 ### Using SentencePiece with Preprocessing
 
@@ -325,7 +316,7 @@ python tools/preprocess_ssg_protocol_data.py \
 
 ### Example: End-to-End Workflow
 
-1. **Prepare training corpus** (text files or JSONL):
+1. **Prepare corpus** (text files or JSONL):
 ```bash
 # From multiple directories
 ls ./corpus/
@@ -334,16 +325,15 @@ ls ./corpus/
   conversations/
 ```
 
-2. **Train SentencePiece model**:
+2. **Build SentencePiece vocabulary**:
 ```bash
 python tools/train_sentencepiece.py \
   --input ./corpus \
   --model-prefix ./models/my_rwkv_tokenizer \
-  --model-type bpe \
-  --character-coverage 0.9995
+  --model-type bpe
 ```
 
-This creates a tokenizer with 65529 tokens (default), totaling 65536 with repo special tokens.
+With default `--vocab-size 65536` and no special tokens, this creates a SentencePiece model with 65536 tokens. Add `--special-tokens` to include your special tokens.
 
 3. **Preprocess data for RWKV training**:
 ```bash
